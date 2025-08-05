@@ -105,6 +105,6 @@
 
 詳細な使い方や各ステップの解説は、以下のYouTube動画で詳しく解説しています。ぜひご覧ください！
 
-  * ハガキ差し込み印刷スクリプトの紹介: [URL](https://www.youtube.com/watch?v=xxxxxxxx) 
+  * ハガキ差し込み印刷スクリプトの紹介: [URL](https://youtu.be/_GyQ2wwL5iM) 
   * 【もう迷わない！】Googleフォトの写真をCanvaで素敵に飾る方法 - 簡単連携ガイド: [URL](https://youtu.be/QPr9As0V2hg) 
   * 【超簡単】Googleフォト写真をセブン-イレブンで即プリント！スマホとQRコードで完結！ [URL](https://youtu.be/KGGtGMDfG6k)
