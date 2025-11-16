@@ -133,7 +133,7 @@ CALC_ZIP_BOX_HEIGHT_PX = int(ZIP_BOX_HEIGHT_MM * PIXELS_PER_MM)
 CALC_ZIP_BOX_INDIVIDUAL_WIDTH_PX = int(ZIP_BOX_INDIVIDUAL_WIDTH_MM * PIXELS_PER_MM)
 CALC_ZIP_BOX_INNER_GAP_PX = int(ZIP_BOX_INNER_GAP_MM * PIXELS_PER_MM)
 
-CALC_ZIP_TOP_MARGIN_PX = int(ZIP_TOP_MARGIN_MM * PIXELS_PER_MM) # ここを修正しました
+CALC_ZIP_TOP_MARGIN_PX = int(ZIP_TOP_MARGIN_MM * PIXELS_PER_MM)
 CALC_ZIP_LEFT_MARGIN_PX = int(ZIP_LEFT_MARGIN_MM * PIXELS_PER_MM)
 
 # 郵便番号の描画Y座標（テキストの垂直中央揃えを考慮）
@@ -162,9 +162,9 @@ NAME_LINE_Y_START = 350
 NAME_CHAR_Y_SPACING = 150
 
 # --- レイアウト調整用オフセット ---
-OFFSET_NAME1_Y_FROM_SURNAME_END_AFTER_SPACE = 100
+OFFSET_NAME1_Y_FROM_SEI_END_AFTER_SPACE = 100 # 姓の終端から名までの縦方向オフセット
 
-# 氏名1の名前が配置される列(NAME_COL1_X)から、氏名2の名前が配置される列までのX方向のオフセット。
+# 氏名1の名前が配置される列(NAME_COL1_X)から、連名（氏名2）の名前が配置される列までのX方向のオフセット。
 # 負の値を指定すると左にずれます。
 OFFSET_NAME2_X_FROM_NAME1_COL = -150
 
@@ -206,7 +206,6 @@ def _convert_address_numbers_and_hyphens(text):
     ただし、数字の直後にアルファベットやカタカナ、特定の単位を表す漢字が続く場合は、
     その数字は漢数字に変換せず、全角数字のままにする。
     この関数は、_convert_halfwidth_to_fullwidth_all の後に呼び出されることを想定。
-    これにより、半角ハイフンは先に全角ハイフンに変換され、その後縦棒になる。
     """
     kanji_map = {
         '0': '〇', '1': '一', '2': '二', '3': '三', '4': '四',
@@ -282,7 +281,6 @@ def draw_vertical_text(img_obj, draw_obj, text, font, start_x, start_y, char_y_s
     """
     縦書きでテキストを描画するヘルパー関数。
     一文字ずつ描画し、縦に積み重ねる。
-    全角文字（日本語、漢数字、全角縦棒、全角アルファベットなど）は回転しない。
     Returns the Y-coordinate after the last character is drawn.
     """
     current_y = start_y
@@ -311,14 +309,44 @@ def draw_horizontal_zip_code(draw_obj, text, font, start_x, start_y, char_offset
             current_x += char_offsets[i]
     return current_x
 
+# --- ユーティリティ関数：辞書から指定のキー（複数候補可）で値を取得する ---
+# 住所のヘッダー名 '住所1'/'住所２' などに対応するためのヘルパー関数
+def get_csv_value(row, keys, default=''):
+    """
+    指定されたキー候補のいずれかを使用して辞書から値を取得する。
+    半角数字と全角数字のキー名に対応する。
+    """
+    # 検索すべきキーの候補リストを作成
+    search_keys = set()
+    for key in keys:
+        # 1. 元のキー名
+        search_keys.add(key)
+        # 2. 半角数字を全角数字に置換したキー名
+        full_width_key = key.replace('1', '１').replace('2', '２')
+        search_keys.add(full_width_key)
+        # 3. 全角数字を半角数字に置換したキー名
+        half_width_key = key.replace('１', '1').replace('２', '2')
+        search_keys.add(half_width_key)
+
+    # 検索候補リストを基に、実際に存在するキーを探す
+    for key in search_keys:
+        if key in row:
+            return row[key]
+            
+    return default
+
 
 # --- テンプレートの準備 ---
 if GENERATE_TEMPLATE:
     try:
-        TEMPLATE_IMAGE_PATH = generate_postcard_template(
-            AUTO_TEMPLATE_FILENAME, TEMPLATE_DPI,
-            POSTCARD_WIDTH_MM, POSTCARD_HEIGHT_MM
-        )
+        if not os.path.exists(AUTO_TEMPLATE_FILENAME): # テンプレートが既に存在する場合は再生成しない
+            TEMPLATE_IMAGE_PATH = generate_postcard_template(
+                AUTO_TEMPLATE_FILENAME, TEMPLATE_DPI,
+                POSTCARD_WIDTH_MM, POSTCARD_HEIGHT_MM
+            )
+        else:
+            TEMPLATE_IMAGE_PATH = AUTO_TEMPLATE_FILENAME
+            print(f"テンプレート「{TEMPLATE_IMAGE_PATH}」は既に存在するため、再生成をスキップしました。")
     except Exception as e:
         messagebox.showerror("エラー", f"テンプレートの自動生成に失敗しました: {e}\n「GENERATE_TEMPLATE」をFalseに設定し、手動でテンプレート画像を用意してください。")
         sys.exit()
@@ -352,7 +380,7 @@ except Exception as e:
     sys.exit()
 
 # --- CSVファイルの選択 ---
-messagebox.showinfo("CSVファイル選択", "次に、住所録CSVファイルを選択してください。\n\nCSVファイルには以下のヘッダーが必要です:\n氏名,郵便番号,住所１\n\nオプションで連名用: 氏名２\nオプションで敬称個別指定用: 敬称\nオプションで連名用の敬称: 敬称２\nオプションで住所詳細: 住所２\n\n**全ての半角文字（英数字、カタカナ、記号、スペースを含む）は自動的に全角に変換されます。\n氏名１に含まれる全角スペースは自動的に1つに正規化されます。複数のスペースを入れすぎるとレイアウトが崩れる可能性があります。\n氏名２には、名字（スペース区切りで）と名前を入力してください。名字がない場合は名前のみで構いません。\n住所中の半角・全角ハイフンは自動で縦棒に、半角数字は漢数字に変換されます。**")
+messagebox.showinfo("CSVファイル選択", "次に、住所録CSVファイルを選択してください。\n\nCSVファイルには以下のヘッダーが必要です:\n氏名,郵便番号,住所１(または住所1)\nまたは:\n姓,名,郵便番号,住所１(または住所1)\n\nオプションで連名用: 連名\nオプションで敬称個別指定用: 敬称\nオプションで連名用の敬称: 敬称２(または敬称2)\nオプションで住所詳細: 住所２(または住所2)\n\n**氏名に「姓」と「名」を分割して入力する場合、ヘッダーは「姓」と「名」を使用してください。**")
 
 CSV_FILE_PATH = filedialog.askopenfilename(
     title="住所録CSVファイルを選択",
@@ -379,11 +407,13 @@ if not output_pdf_path:
 
 # 選択されたパスからディレクトリを抽出し、存在しない場合は作成
 OUTPUT_DIR = os.path.dirname(output_pdf_path)
-if not os.path.exists(OUTPUT_DIR):
+if OUTPUT_DIR and not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
     print(f"出力フォルダ「{OUTPUT_DIR}」を作成しました。")
-else:
+elif OUTPUT_DIR:
     print(f"出力フォルダ「{OUTPUT_DIR}」を使用します。")
+else:
+    print("カレントディレクトリを出力フォルダとして使用します。")
 
 
 # --- CSVファイルの読み込みと画像生成 ---
@@ -412,8 +442,8 @@ try:
 
         for enc in encodings_to_try:
             try:
+                # 完全にファイル全体を読み込むのではなく、csv.readerでエラーなくヘッダーを読めるか確認
                 with open(CSV_FILE_PATH, 'r', encoding=enc) as f:
-                    # ヘッダーを読み込み、エラーがなければ成功とみなす
                     reader = csv.reader(f)
                     header = next(reader)
                     detected_encoding = enc
@@ -451,7 +481,10 @@ try:
         rows = list(reader) # 全行を読み込み
 
     for i, row in enumerate(rows):
-        current_name_for_progress = row.get('氏名', '不明') # プログレスバー表示用
+        current_name_for_progress = row.get('氏名', row.get('名', '不明')) # プログレスバー表示用
+        if not current_name_for_progress:
+            current_name_for_progress = f"行{i+2} (名前なし)"
+            
         update_progress(current_name_for_progress, i + 1, total_files_to_process)
 
         # テンプレート画像を開く (自動生成されたものまたは手動で用意したもの)
@@ -465,14 +498,32 @@ try:
 
         draw = ImageDraw.Draw(img) # ImageDrawオブジェクトはここで作成
 
-        # CSVから必要なデータを取り出す
+        # --- CSVから必要なデータを取り出す ---
         name1_raw = row.get('氏名', '').strip()
-        name2_raw = row.get('氏名２', '').strip()
+        
+        # --- 住所の取得をget_csv_value関数で統一（住所1/住所2対応） ---
+        address1_raw = get_csv_value(row, ['住所１', '住所1']).strip()
+        address2_raw = get_csv_value(row, ['住所２', '住所2']).strip()
+        # -----------------------------------------------------------------
+
+        # --- 氏名/姓/名の自動結合ロジックの改善 ---
+        sei_part = row.get('姓', '').strip()
+        mei_part = row.get('名', '').strip()
+
+        # 氏名列が空で、かつ姓または名のいずれか一方または両方にデータがある場合
+        if not name1_raw and (sei_part or mei_part):
+            # 姓と名の両方にデータがある場合のみ全角スペース ('　') で区切る
+            separator = '　' if sei_part and mei_part else ''
+            name1_raw = sei_part + separator + mei_part
+        # ------------------------------------------------------------------
+        
+        name2_raw = row.get('連名', '').strip()  
         zip_code_raw = row.get('郵便番号', '').strip()
-        address1_raw = row.get('住所１', '').strip()
-        address2_raw = row.get('住所２', '').strip()
+        
+        # --- 敬称の取得: '敬称２'/'敬称2' に対応 ---
         title = row.get('敬称', DEFAULT_TITLE).strip()
-        title2 = row.get('敬称２', '').strip() # 新しい敬称２の取得
+        title2 = get_csv_value(row, ['敬称２', '敬称2']).strip()
+        # ----------------------------------------------
 
         # --- 全ての半角文字を全角に変換する処理を最初に適用 ---
         address1_fullwidth = _convert_halfwidth_to_fullwidth_all(address1_raw)
@@ -486,7 +537,7 @@ try:
         name1_fullwidth = _convert_halfwidth_to_fullwidth_all(name1_raw)
         name1_final = _normalize_name_spacing(name1_fullwidth)
 
-        name2_full_converted = _convert_halfwidth_to_fullwidth_all(name2_raw) # 氏名2も全角変換
+        name2_full_converted = _convert_halfwidth_to_fullwidth_all(name2_raw) # 連名も全角変換
 
         # --- 郵便番号の処理 (横書き) ---
         zip_code = re.sub(r'[^0-9]', '', zip_code_raw)
@@ -503,83 +554,80 @@ try:
 
         # --- 氏名全体の描画ロジック ---
         # 氏名1の処理
-        surname1_part = ""
-        name1_first_name_part = ""
+        sei1_part = "" # 姓
+        mei1_part = "" # 名
         if '　' in name1_final:
             name1_parts = name1_final.split('　', 1)
-            surname1_part = name1_parts[0]
-            name1_first_name_part = name1_parts[1]
+            sei1_part = name1_parts[0]
+            mei1_part = name1_parts[1]
         else:
-            surname1_part = name1_final
+            sei1_part = name1_final # スペースがない場合は全体を姓とみなす（会社名などの場合）
 
-        # 氏名2の処理
-        surname2_part = ""
-        name2_first_name_part = ""
+        # 氏名2（連名）の処理
+        sei2_part = "" # 姓
+        mei2_part = "" # 名
         if '　' in name2_full_converted:
             name2_parts = name2_full_converted.split('　', 1)
-            surname2_part = name2_parts[0]
-            name2_first_name_part = name2_parts[1]
+            sei2_part = name2_parts[0]
+            mei2_part = name2_parts[1]
         else:
-            name2_first_name_part = name2_full_converted # スペースがない場合は全体を名前とみなす
+            mei2_part = name2_full_converted # スペースがない場合は全体を名とみなす
 
         # 各氏名の描画に必要な縦方向の長さを計算
-        # 名字の長さ + スペースの長さ + 名前の長さ
-        len_name1_full = len(surname1_part) * NAME_CHAR_Y_SPACING
-        if name1_first_name_part:
-            len_name1_full += OFFSET_NAME1_Y_FROM_SURNAME_END_AFTER_SPACE + len(name1_first_name_part) * NAME_CHAR_Y_SPACING
+        # 姓の長さ + スペースの長さ + 名の長さ
+        len_name1_full = len(sei1_part) * NAME_CHAR_Y_SPACING
+        if mei1_part:
+            len_name1_full += OFFSET_NAME1_Y_FROM_SEI_END_AFTER_SPACE + len(mei1_part) * NAME_CHAR_Y_SPACING
 
         len_name2_full = 0
         if name2_full_converted:
-            len_name2_full = len(surname2_part) * NAME_CHAR_Y_SPACING
-            if name2_first_name_part:
-                len_name2_full += OFFSET_NAME1_Y_FROM_SURNAME_END_AFTER_SPACE + len(name2_first_name_part) * NAME_CHAR_Y_SPACING
-        
+            len_name2_full = len(sei2_part) * NAME_CHAR_Y_SPACING
+            if mei2_part:
+                len_name2_full += OFFSET_NAME1_Y_FROM_SEI_END_AFTER_SPACE + len(mei2_part) * NAME_CHAR_Y_SPACING
+            
         # 名前開始のY座標を揃えるための基準Y座標を決定
-        # 名字部分が長い場合も考慮し、全体として長くなる方に合わせる
+        # 氏名1と氏名2それぞれの姓の終端Y座標を計算
+        temp_y_after_sei1 = NAME_LINE_Y_START + len(sei1_part) * NAME_CHAR_Y_SPACING
+        temp_y_after_sei2 = NAME_LINE_Y_START
+        if sei2_part:
+            temp_y_after_sei2 = NAME_LINE_Y_START + len(sei2_part) * NAME_CHAR_Y_SPACING
+
+        # 名部分が始まるY座標は、長い方の姓の終端にオフセットを加えた位置に揃える
+        unified_mei_start_y = max(temp_y_after_sei1, temp_y_after_sei2) + OFFSET_NAME1_Y_FROM_SEI_END_AFTER_SPACE
+
+
+        # 1. 氏名1の姓を描画
+        draw_vertical_text(img, draw, sei1_part, name_font, NAME_COL1_X, NAME_LINE_Y_START, NAME_CHAR_Y_SPACING, TEXT_COLOR)
         
-        # 仮描画で名字の最終Y座標を取得 (実際に描画はしない)
-        # 氏名1と氏名2それぞれの名字の終端Y座標を計算
-        temp_y_after_surname1 = NAME_LINE_Y_START + len(surname1_part) * NAME_CHAR_Y_SPACING
-        temp_y_after_surname2 = NAME_LINE_Y_START 
-        if surname2_part:
-            temp_y_after_surname2 = NAME_LINE_Y_START + len(surname2_part) * NAME_CHAR_Y_SPACING
-
-        # 名前部分が始まるY座標は、長い方の名字の終端にオフセットを加えた位置に揃える
-        unified_name_start_y = max(temp_y_after_surname1, temp_y_after_surname2) + OFFSET_NAME1_Y_FROM_SURNAME_END_AFTER_SPACE
-
-
-        # 1. 氏名1の名字を描画
-        draw_vertical_text(img, draw, surname1_part, name_font, NAME_COL1_X, NAME_LINE_Y_START, NAME_CHAR_Y_SPACING, TEXT_COLOR)
-        
-        # 2. 氏名1の名前を描画 (統一された開始Y座標を使用)
-        if name1_first_name_part:
-            draw_vertical_text(img, draw, name1_first_name_part, name_font, NAME_COL1_X, unified_name_start_y, NAME_CHAR_Y_SPACING, TEXT_COLOR)
+        # 2. 氏名1の名を描画 (統一された開始Y座標を使用)
+        if mei1_part:
+            draw_vertical_text(img, draw, mei1_part, name_font, NAME_COL1_X, unified_mei_start_y, NAME_CHAR_Y_SPACING, TEXT_COLOR)
 
         # 3. 氏名2（連名）の描画ロジック
         if name2_full_converted:
             name2_draw_x = NAME_COL1_X + OFFSET_NAME2_X_FROM_NAME1_COL
             
-            # 氏名2の名字が存在する場合に描画
-            if surname2_part:
-                draw_vertical_text(img, draw, surname2_part, name2_font, name2_draw_x, NAME_LINE_Y_START, NAME_CHAR_Y_SPACING, TEXT_COLOR)
+            # 氏名2の姓が存在する場合に描画
+            if sei2_part:
+                draw_vertical_text(img, draw, sei2_part, name2_font, name2_draw_x, NAME_LINE_Y_START, NAME_CHAR_Y_SPACING, TEXT_COLOR)
 
-            # 氏名2の名前を描画（統一された開始Y座標を使用）
-            if name2_first_name_part:
-                draw_vertical_text(img, draw, name2_first_name_part, name2_font, name2_draw_x, unified_name_start_y, NAME_CHAR_Y_SPACING, TEXT_COLOR)
+            # 氏名2の名を描画（統一された開始Y座標を使用）
+            if mei2_part:
+                draw_vertical_text(img, draw, mei2_part, name2_font, name2_draw_x, unified_mei_start_y, NAME_CHAR_Y_SPACING, TEXT_COLOR)
         
         # 敬称のY座標を揃えるための基準Y座標を決定
         # 氏名1の最終Y座標を正確に計算
-        final_y_name1_end = NAME_LINE_Y_START + len(surname1_part) * NAME_CHAR_Y_SPACING
-        if name1_first_name_part:
-            final_y_name1_end = unified_name_start_y + len(name1_first_name_part) * NAME_CHAR_Y_SPACING
+        final_y_name1_end = NAME_LINE_Y_START + len(sei1_part) * NAME_CHAR_Y_SPACING
+        if mei1_part:
+            final_y_name1_end = unified_mei_start_y + len(mei1_part) * NAME_CHAR_Y_SPACING
 
-        # 氏名2の最終Y座標を正確に計算
+        # 氏名2（連名）の最終Y座標を正確に計算
         final_y_name2_end = NAME_LINE_Y_START # 初期値
         if name2_full_converted:
-            if surname2_part:
-                final_y_name2_end = NAME_LINE_Y_START + len(surname2_part) * NAME_CHAR_Y_SPACING # 名字の最終Y
-            if name2_first_name_part:
-                final_y_name2_end = unified_name_start_y + len(name2_first_name_part) * NAME_CHAR_Y_SPACING # 名前の最終Y
+            if sei2_part:
+                final_y_name2_end = NAME_LINE_Y_START + len(sei2_part) * NAME_CHAR_Y_SPACING # 姓の最終Y
+            if mei2_part:
+                final_y_name2_end = unified_mei_start_y + len(mei2_part) * NAME_CHAR_Y_SPACING # 名の最終Y
 
         # 敬称のY座標は、氏名1と氏名2のより下にある氏名の終端Y座標に合わせる
         unified_title_start_y = max(final_y_name1_end, final_y_name2_end) + OFFSET_TITLE_Y_FROM_NAME_END
@@ -597,11 +645,15 @@ try:
 
     # 全ての画像を1つのPDFファイルに保存
     if pdf_pages:
-        if len(pdf_pages) > 1:
-            pdf_pages[0].save(output_pdf_path, save_all=True, append_images=pdf_pages[1:], resolution=TEMPLATE_DPI)
-        else:
-            pdf_pages[0].save(output_pdf_path, resolution=TEMPLATE_DPI)
-        print(f"\n全てのハガキを1つのPDFファイルにまとめました: {output_pdf_path}")
+        try:
+            if len(pdf_pages) > 1:
+                pdf_pages[0].save(output_pdf_path, save_all=True, append_images=pdf_pages[1:], resolution=TEMPLATE_DPI)
+            else:
+                pdf_pages[0].save(output_pdf_path, resolution=TEMPLATE_DPI)
+            print(f"\n全てのハガキを1つのPDFファイルにまとめました: {output_pdf_path}")
+        except Exception as pdf_e:
+            messagebox.showerror("エラー", f"PDFファイルの保存中にエラーが発生しました。\nファイルが他のプログラムで開かれていないか確認してください。\nエラー詳細: {pdf_e}")
+            raise pdf_e # 処理を中断させる
     else:
         print("\n生成されたハガキがありませんでした。")
 
